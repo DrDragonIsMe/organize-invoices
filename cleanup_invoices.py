@@ -4,18 +4,22 @@
 
 功能：
 1. 删除所有无效的 HTML 阅读器页面
-2. 按内容哈希去重，只保留一个副本（优先保留文件名含发票号码的）
-3. 重建 SQLite 数据库
+2. 按内容哈希去重，只保留一个副本（优先保留文件名含发票号码、高格式优先级的）
+3. 从文件名和文件内容（OFD、PDF）中提取发票唯一标识
+4. 清理空目录
+5. 重建 SQLite 数据库（含格式优先级和发票最佳格式记录）
 
 使用方法：
     python cleanup_invoices.py
-    python cleanup_invoices.py --dry-run    # 仅预览，不删除
+    python cleanup_invoices.py --dry-run         # 仅预览，不删除
+    python cleanup_invoices.py --target-dir ./invoices   # 指定目标目录
 """
 
 import argparse
 import hashlib
 import os
 import re
+import subprocess
 import sqlite3
 import sys
 from pathlib import Path
@@ -69,8 +73,8 @@ def extract_invoice_id_from_file(path: Path) -> Optional[str]:
                                 return m.group(1)
         elif ext == '.pdf':
             try:
-                result = os.popen(f'strings "{path}"').read()
-                m = re.search(r'\b(\d{20})\b', result)
+                result = subprocess.run(['strings', str(path)], capture_output=True, text=True, timeout=5)
+                m = re.search(r'\b(\d{20})\b', result.stdout)
                 if m:
                     return m.group(1)
             except Exception:

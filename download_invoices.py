@@ -3,15 +3,23 @@
 发票邮件附件及链接追踪下载工具
 
 功能：
-1. 通过 IMAP 检索标题含指定关键词的邮件
-2. 下载邮件中的附件（PDF、图片等）
-3. 追踪邮件正文中的发票链接并下载
-4. 按邮件接收月份分目录存放
-5. 内容哈希查重 + 发票级跨格式去重（同一张发票只下载一种格式）
+1. 通过 IMAP 检索标题含指定关键词的邮件，支持多关键词和日期范围过滤
+2. 下载邮件中的附件（PDF、图片、OFD、XML 等），按月份分目录存放
+3. 追踪邮件正文中的发票链接并下载，支持短链接解析和链接打分排序
+4. 内容哈希查重 + URL 级别查重 + 发票级跨格式去重（同一张发票只保留最优格式）
+5. Playwright SPA 渲染：自动识别百望云、票通等 Vue/React 预览页，提取真实下载链接
+6. HTML 阅读器/空白页检测：自动跳过绿页云等在线阅读器框架页和 JS 空白页
+7. 从 HTML 中提取 base64 编码的 PDF/图片数据
+8. 支持 blocked_senders 发件人黑名单过滤
+9. 自动从文件内容（OFD、PDF）中提取发票号码并重命名文件
+10. 自动提取发票金额和开票日期，汇总到报告
+11. 处理 Supplemental 目录（手动补充的发票自动归类到对应月份）
+12. 生成 JSON 和 HTML 核查报告，含月度/发票级金额汇总
 
 使用方法：
     python download_invoices.py
     python download_invoices.py --config custom_config.json
+    python download_invoices.py --dry-run    # 仅预览，不下载
 """
 
 import argparse
@@ -24,14 +32,17 @@ import os
 import re
 import sqlite3
 import ssl
+import subprocess
 import sys
+
+from generate_report import ReportGenerator
 import tempfile
 from datetime import datetime
 from email.header import decode_header
 from pathlib import Path
 from time import sleep
 from urllib.parse import urljoin, urlparse
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Tuple
 
 import requests
 from bs4 import BeautifulSoup
@@ -314,7 +325,11 @@ class Downloader:
                 with self.session.get(url, stream=True, timeout=self.timeout, allow_redirects=True) as resp:
                     resp.raise_for_status()
 
-                    total = expected_size or int(resp.headers.get('content-length', 0))
+                    cl = resp.headers.get('content-length', '')
+                    try:
+                        total = expected_size or int(cl)
+                    except (ValueError, TypeError):
+                        total = expected_size or 0
                     desc = dest_path.name[:30]
 
                     with open(dest_path, 'wb') as f, tqdm(
@@ -421,12 +436,7 @@ class EmailParser:
         """从邮件中提取所有附件信息"""
         attachments = []
         for part in msg.walk():
-            content_disposition = part.get_content_disposition()
-            if not content_disposition:
-                continue
-            if 'attachment' not in content_disposition.lower():
-                continue
-
+            content_disposition = part.get_content_disposition() or ''
             filename = part.get_filename()
             if filename:
                 filename = self.decode_header_str(filename)
@@ -436,6 +446,14 @@ class EmailParser:
             payload = part.get_payload(decode=True)
             if not payload:
                 continue
+
+            # 区分 attachment 和 inline：
+            # - attachment：按扩展名判断（常见发票格式）
+            # - inline / 无 Content-Disposition：必须文件名明确像发票才接受
+            #   防止账单、广告邮件中的 banner 图片被误下载
+            if 'attachment' not in content_disposition.lower():
+                if not self._looks_like_invoice_name(filename):
+                    continue
 
             ext = Path(filename).suffix.lower()
             if ext not in self.INVOICE_EXTENSIONS and not self._looks_like_invoice_name(filename):
@@ -467,6 +485,8 @@ class EmailParser:
         unique = []
         for link in links:
             url = link['url']
+            if not url.startswith(('http://', 'https://')):
+                continue
             if url not in seen:
                 seen.add(url)
                 unique.append(link)
@@ -582,7 +602,7 @@ class EmailParser:
             if domain in parsed.netloc.lower():
                 score += 1
 
-        if parsed.netloc.lower() in {'t.cn', 'bit.ly', 'tinyurl', 'goo.gl', 'dwz.cn'}:
+        if parsed.netloc.lower() in {'t.cn', 'bit.ly', 'tinyurl.com', 'goo.gl', 'dwz.cn'}:
             score = max(1, score - 2)
 
         return score
@@ -658,6 +678,7 @@ class InvoiceDownloader:
         self.parser = EmailParser(self.downloader, self.logger)
         self.target_dir = Path(config['target_dir'])
         self.target_dir.mkdir(parents=True, exist_ok=True)
+        self.dry_run = config.get('dry_run', False)
 
         # 初始化查重数据库
         db_path = str(self.target_dir / '.invoice_db')
@@ -713,18 +734,24 @@ class InvoiceDownloader:
                 except Exception as e:
                     self.logger.warning(f"处理文件夹 {decoded_name} 时出错: {e}")
         finally:
-            imap.logout()
-            self.db.close()
+            try:
+                imap.logout()
+            except Exception:
+                pass
 
         # ---- 处理 Supplemental 目录 ----
-        self._process_supplement_dir()
+        gen = ReportGenerator(self.target_dir, records=self.records, db=self.db, logger=self.logger)
+        supplement_records = gen.process_supplemental(dry_run=self.dry_run)
+        self.records.extend(supplement_records)
 
-        self._print_stats()
-
+        # ---- 生成报告 ----
         if self.records:
-            self._generate_report()
+            gen.generate_reports()
         else:
             self.logger.info("没有匹配到含发票的邮件，跳过报告生成")
+
+        self._print_stats()
+        self.db.close()
 
     def _list_imap_folders(self, imap: imaplib.IMAP4) -> List[tuple]:
         """列出所有 IMAP 文件夹"""
@@ -742,190 +769,6 @@ class InvoiceDownloader:
         except Exception as e:
             self.logger.warning(f"列出文件夹失败: {e}")
         return result
-
-    def _generate_report(self):
-        """生成本地核查报告"""
-        report_dir = Path('reports')
-        report_dir.mkdir(exist_ok=True)
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-
-        json_path = report_dir / f'invoice_report_{timestamp}.json'
-        with open(json_path, 'w', encoding='utf-8') as f:
-            json.dump(self.records, f, ensure_ascii=False, indent=2)
-        self.logger.success(f"JSON 报告已保存: {json_path}")
-
-        html_path = report_dir / f'invoice_report_{timestamp}.html'
-        html_content = self._build_html_report()
-        with open(html_path, 'w', encoding='utf-8') as f:
-            f.write(html_content)
-        self.logger.success(f"HTML 报告已保存: {html_path}")
-
-    def _build_html_report(self) -> str:
-        """构建 HTML 核查报告"""
-        rows = []
-        total_files = 0
-        total_amount = 0.0
-        month_amounts: Dict[str, float] = {}
-        invoice_amounts: Dict[str, float] = {}
-
-        for record in self.records:
-            file_list_html = []
-            for f in record['files']:
-                total_files += 1
-                size_str = self._format_size(f.get('size', 0))
-                status_color = 'green' if f.get('status') == '成功' else 'red'
-                amt = f.get('amount')
-                # 已有文件可能没有amount，尝试从文件系统补充提取
-                if amt is None:
-                    try:
-                        fp = None
-                        if f.get('path'):
-                            fp = self.target_dir / f['path']
-                        elif f.get('filename'):
-                            # path为空时，通过filename在目录中查找
-                            for month_dir in self.target_dir.iterdir():
-                                if month_dir.is_dir():
-                                    candidate = month_dir / f['filename']
-                                    if candidate.exists():
-                                        fp = candidate
-                                        break
-                        if fp and fp.exists():
-                            amt = self._extract_amount(fp)
-                    except Exception:
-                        pass
-                amt_str = f' <span style="color:#e67e22;font-weight:600">¥{amt:.2f}</span>' if amt else ''
-                # 汇总金额：成功文件 + 已存在文件（排除SPA跳过、下载失败等）
-                if amt and f.get('status') in ('成功', '已存在/重复', '已存在/重复(URL)'):
-                    total_amount += amt
-                    month = record.get('month', 'unknown')
-                    month_amounts[month] = month_amounts.get(month, 0.0) + amt
-                    # 尝试从文件名提取发票ID作为汇总key
-                    inv_id = self._extract_invoice_id(f['filename']) or f['filename']
-                    if inv_id not in invoice_amounts:
-                        invoice_amounts[inv_id] = amt
-
-                file_list_html.append(
-                    f'<div class="file-item">'
-                    f'<span class="file-type">[{f["type"]}]</span> '
-                    f'<span class="file-name">{f["filename"]}</span> '
-                    f'<span class="file-size">({size_str})</span>{amt_str} '
-                    f'<span style="color:{status_color};font-size:12px">{f.get("status","")}</span>'
-                    f'</div>'
-                )
-
-            rows.append(f'''
-            <tr>
-                <td class="date">{record['date_display']}</td>
-                <td class="subject">{record['subject']}</td>
-                <td class="from">{record['from']}</td>
-                <td class="files">{''.join(file_list_html)}</td>
-            </tr>
-            ''')
-
-        # 构建金额汇总表格
-        month_summary_rows = ''
-        for month, amt in sorted(month_amounts.items()):
-            month_summary_rows += f'<tr><td>{month}</td><td style="text-align:right;font-weight:600;color:#e67e22">¥{amt:.2f}</td></tr>'
-
-        invoice_summary_rows = ''
-        for inv_id, amt in sorted(invoice_amounts.items(), key=lambda x: x[1], reverse=True):
-            display_id = inv_id[:30] if len(inv_id) > 30 else inv_id
-            invoice_summary_rows += f'<tr><td>{display_id}</td><td style="text-align:right;font-weight:600;color:#e67e22">¥{amt:.2f}</td></tr>'
-
-        return f'''<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-    <meta charset="UTF-8">
-    <title>发票邮件核查报告</title>
-    <style>
-        body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; margin: 40px; background: #f5f6f7; }}
-        .container {{ max-width: 1400px; margin: 0 auto; background: white; padding: 30px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }}
-        h1 {{ color: #1a1a1a; margin-bottom: 8px; }}
-        h2 {{ color: #333; margin-top: 30px; margin-bottom: 12px; font-size: 18px; }}
-        .meta {{ color: #666; margin-bottom: 24px; font-size: 14px; }}
-        table {{ width: 100%; border-collapse: collapse; font-size: 14px; }}
-        th {{ background: #3370ff; color: white; padding: 12px 16px; text-align: left; font-weight: 500; }}
-        td {{ padding: 12px 16px; border-bottom: 1px solid #e8e8e8; vertical-align: top; }}
-        tr:hover {{ background: #f8f9fa; }}
-        .date {{ white-space: nowrap; color: #666; width: 120px; }}
-        .subject {{ font-weight: 500; color: #1a1a1a; max-width: 400px; }}
-        .from {{ color: #666; max-width: 300px; }}
-        .file-item {{ margin: 4px 0; padding: 4px 8px; background: #f0f5ff; border-radius: 4px; display: inline-block; }}
-        .file-type {{ color: #3370ff; font-size: 12px; }}
-        .file-name {{ color: #1a1a1a; }}
-        .file-size {{ color: #999; font-size: 12px; }}
-        .summary {{ margin-top: 20px; padding: 16px; background: #e8f3ff; border-radius: 8px; color: #1a1a1a; }}
-        .amount-box {{ margin-top: 20px; padding: 16px 20px; background: #fff7e6; border-radius: 8px; border-left: 4px solid #fa8c16; }}
-        .amount-box h3 {{ margin: 0 0 8px 0; color: #d46b08; font-size: 16px; }}
-        .amount-box .total {{ font-size: 28px; font-weight: 700; color: #e67e22; }}
-        .summary-table {{ width: auto; min-width: 300px; margin-top: 10px; }}
-        .summary-table th {{ background: #fa8c16; }}
-        .summary-table td {{ padding: 8px 16px; }}
-        .two-col {{ display: flex; gap: 20px; flex-wrap: wrap; }}
-        .two-col .amount-box {{ flex: 1; min-width: 300px; }}
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h1>📧 发票邮件核查报告</h1>
-        <div class="meta">
-            生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} &nbsp;|&nbsp;
-            匹配邮件: {len(self.records)} 封 &nbsp;|&nbsp;
-            提取文件: {total_files} 个
-        </div>
-
-        <div class="amount-box">
-            <h3>💰 发票金额总计</h3>
-            <div class="total">¥{total_amount:,.2f}</div>
-        </div>
-
-        <table>
-            <thead>
-                <tr>
-                    <th>日期</th>
-                    <th>邮件标题</th>
-                    <th>发件人</th>
-                    <th>提取的文件</th>
-                </tr>
-            </thead>
-            <tbody>
-                {''.join(rows)}
-            </tbody>
-        </table>
-
-        <div class="two-col">
-            <div class="amount-box">
-                <h3>📅 按月份汇总</h3>
-                <table class="summary-table">
-                    <thead><tr><th>月份</th><th style="text-align:right">金额</th></tr></thead>
-                    <tbody>{month_summary_rows}</tbody>
-                </table>
-            </div>
-            <div class="amount-box">
-                <h3>📋 按发票汇总</h3>
-                <table class="summary-table">
-                    <thead><tr><th>发票标识</th><th style="text-align:right">金额</th></tr></thead>
-                    <tbody>{invoice_summary_rows}</tbody>
-                </table>
-            </div>
-        </div>
-
-        <div class="summary">
-            <strong>说明：</strong>本报告由脚本自动生成，展示从邮箱中提取的发票邮件及其对应文件。
-            文件保存在 <code>{self.target_dir.absolute()}</code> 目录下，按月份分文件夹存放。
-        </div>
-    </div>
-</body>
-</html>'''
-
-    @staticmethod
-    def _format_size(size: int) -> str:
-        if size < 1024:
-            return f"{size}B"
-        elif size < 1024 * 1024:
-            return f"{size / 1024:.1f}KB"
-        else:
-            return f"{size / (1024 * 1024):.1f}MB"
 
     def _connect_imap(self) -> Optional[imaplib.IMAP4]:
         """连接 IMAP 服务器"""
@@ -1034,15 +877,11 @@ class InvoiceDownloader:
         matched = any(kw.lower() in subject_lower for kw in keywords)
 
         # 策略 2: 如果标题不匹配，检查发件人域名 + 正文关键词
-        # 避免纯正文"发票"匹配到广告/账单等假阳性
+        # 默认黑名单为空，所有邮件都有效；可通过配置 blocked_senders 排除特定域名
         if not matched:
             from_lower = from_addr.lower()
-            # 已知发票平台发件人
-            known_senders = [
-                'baiwang.com', 'vpiaotong.com', 'crestv.cn', 'meituan.com',
-                'newtimeai.com', 'chinatax.gov.cn', 'efapiao.com',
-            ]
-            is_known_sender = any(domain in from_lower for domain in known_senders)
+            blocked_senders = self.config.get('blocked_senders', [])
+            is_blocked_sender = any(domain in from_lower for domain in blocked_senders)
 
             body_text = ''
             html_body = self.parser._get_html_body(msg)
@@ -1050,16 +889,13 @@ class InvoiceDownloader:
             if text_body:
                 body_text = text_body
             elif html_body:
-                import re as re_body
-                body_text = re_body.sub(r'<[^>]+>', ' ', html_body)
+                body_text = re.sub(r'<[^>]+>', ' ', html_body)
             body_lower = body_text.lower()
 
-            if is_known_sender:
-                # 已知发票平台：正文含"发票"即可
+            if not is_blocked_sender:
                 matched = any(kw.lower() in body_lower for kw in keywords)
             else:
-                # 非已知平台且标题不匹配 → 大概率是假阳性（微信广告、建行账单等）
-                # 这些邮件正文也含"发票"但其实是广告/通知，不是实际发票
+                self.logger.info(f"  发件人 {from_addr} 在黑名单中，跳过正文匹配")
                 matched = False
 
         if not matched:
@@ -1085,6 +921,8 @@ class InvoiceDownloader:
 
         # ---- 1. 处理附件 ----
         attachments = self.parser.extract_attachments(msg)
+        if attachments:
+            self.logger.info(f"  发现 {len(attachments)} 个附件: {[a['filename'] for a in attachments]}")
         self.stats['attachments_found'] += len(attachments)
 
         for att in attachments:
@@ -1098,6 +936,8 @@ class InvoiceDownloader:
 
         # ---- 2. 处理邮件中的链接 ----
         links = self.parser.extract_links(msg)
+        if links:
+            self.logger.info(f"  发现 {len(links)} 个链接: {[(l['url'][:60], l['score']) for l in links]}")
         self.stats['links_found'] += len(links)
 
         link_groups = self._group_links_by_invoice(links)
@@ -1107,9 +947,9 @@ class InvoiceDownloader:
             if file_info:
                 if file_info.get('status') == '成功':
                     self.stats['links_downloaded'] += 1
-                elif file_info.get('status') == '已存在/重复':
+                elif file_info.get('status') in ('已存在/重复', '已存在/重复(URL)'):
                     self.stats['links_skipped_dup'] += 1
-                elif file_info.get('status') == 'JS渲染空白页，跳过':
+                elif file_info.get('status') in ('JS渲染空白页，跳过', '在线阅读器页面，跳过'):
                     self.stats['links_skipped_spa'] += 1
                 record['files'].append(file_info)
             else:
@@ -1236,7 +1076,7 @@ class InvoiceDownloader:
                 if 'Doc_0/Tags/CustomTag.xml' in z.namelist():
                     with z.open('Doc_0/Tags/CustomTag.xml') as f:
                         content = f.read().decode('utf-8', errors='replace')
-                        m = re.search(r'TaxInclusiveTotalAmount[^>]*>.*?<(\d+\.\d{2})<', content)
+                        m = re.search(r'TaxInclusiveTotalAmount[^>]*>(\d+\.\d{2})<', content)
                         if m:
                             return float(m.group(1))
 
@@ -1488,16 +1328,17 @@ class InvoiceDownloader:
         """判断 URL 是否需要用 Playwright 浏览器渲染"""
         return any(p.search(url) for p in InvoiceDownloader.SPA_RENDER_PATTERNS)
 
-    def _render_spa_page(self, url: str) -> List[str]:
-        """使用 Playwright 渲染 SPA 页面，提取真实的下载链接
+    def _render_spa_page(self, url: str) -> Tuple[List[str], List[bytes]]:
+        """使用 Playwright 渲染 SPA 页面，提取真实的下载链接和 base64 数据
 
-        返回找到的下载 URL 列表。
+        返回 (urls, base64_datas)。
         """
         if not PLAYWRIGHT_AVAILABLE:
             self.logger.warning(f"  Playwright 未安装，无法渲染 SPA 页面: {url[:60]}...")
-            return []
+            return [], []
 
         urls = []
+        base64_datas: List[bytes] = []
         try:
             self.logger.info(f"  Playwright 渲染 SPA 页面: {url[:80]}...")
             with sync_playwright() as p:
@@ -1514,10 +1355,45 @@ class InvoiceDownloader:
                 except Exception as e:
                     self.logger.warning(f"  页面加载超时: {e}")
                     browser.close()
-                    return []
+                    return [], []
 
                 # 等待 Vue/React 渲染完成（额外等待 2 秒让 JS 执行）
                 page.wait_for_timeout(2000)
+
+                # 策略 0: 检测「链接过期/失效/失败」弹窗，点击确认后刷新页面重新加载
+                try:
+                    page_text = page.inner_text('body') or ''
+                    error_keywords = [
+                        '链接已过期', '链接过期', '链接失效', '已失效', '失效',
+                        '下载失败', '请求失败', '出错了', '错误提示', '票据不存在',
+                        '发票不存在', '无法查看', '加载失败', '请刷新',
+                    ]
+                    if any(kw in page_text for kw in error_keywords):
+                        self.logger.info(f"  检测到错误/过期提示，尝试点击确认并刷新页面")
+                        for btn_text in ['确认', '确定', '知道了', '关闭', '重试', '刷新']:
+                            try:
+                                locator = page.locator(
+                                    f'button:has-text("{btn_text}"), '
+                                    f'.el-button:has-text("{btn_text}"), '
+                                    f'a:has-text("{btn_text}"), '
+                                    f'div[role="button"]:has-text("{btn_text}"), '
+                                    f'span:has-text("{btn_text}")'
+                                ).first
+                                if locator.is_visible():
+                                    locator.click()
+                                    self.logger.info(f"  点击「{btn_text}」按钮")
+                                    page.wait_for_timeout(1500)
+                                    break
+                            except Exception:
+                                pass
+                        try:
+                            page.reload(wait_until='networkidle', timeout=30000)
+                            page.wait_for_timeout(3000)
+                            self.logger.info(f"  页面已刷新，重新提取内容")
+                        except Exception as e:
+                            self.logger.warning(f"  刷新页面失败: {e}")
+                except Exception:
+                    pass
 
                 # 策略 1: 查找页面中所有的 <a> 链接，按关键词筛选
                 hrefs = page.eval_on_selector_all('a[href]', 'elements => elements.map(e => ({href: e.href, text: e.innerText.trim()}))')
@@ -1535,7 +1411,7 @@ class InvoiceDownloader:
                     if src and any(src.lower().endswith(ext) for ext in ['.png', '.jpg', '.jpeg', '.gif', '.webp']):
                         # 排除极小的图片（图标/logo）
                         try:
-                            size_info = page.eval_on_selector(f'img[src="{src}"]', 'e => e.naturalWidth')
+                            size_info = page.eval_on_selector(f'img[src={json.dumps(src)}]', 'e => e.naturalWidth')
                             if size_info and size_info > 200:  # 大于 200px 的图片才可能是发票
                                 urls.append(src)
                         except Exception:
@@ -1550,8 +1426,6 @@ class InvoiceDownloader:
                 # 策略 4: 查找页面中 base64 编码的 PDF/图片
                 page_content = page.content()
                 base64_datas = self._extract_base64_from_html(page_content)
-                # 注意：base64 数据直接返回字节，不在 URL 列表中
-                # 由调用方处理
 
                 # 策略 5: 百望云特殊处理 - 查找 Vue 组件中的下载按钮
                 try:
@@ -1587,12 +1461,12 @@ class InvoiceDownloader:
                 seen.add(u)
                 unique.append(u)
 
-            self.logger.info(f"  Playwright 提取到 {len(unique)} 个有效链接")
-            return unique
+            self.logger.info(f"  Playwright 提取到 {len(unique)} 个有效链接, {len(base64_datas)} 个 base64 数据")
+            return unique, base64_datas
 
         except Exception as e:
             self.logger.warning(f"  Playwright 渲染失败: {e}")
-            return []
+            return [], []
 
     # ---- 附件保存（带查重） ----
 
@@ -1615,6 +1489,16 @@ class InvoiceDownloader:
 
         safe_name = self._sanitize_filename(filename)
         dest = self._unique_path(month_dir / safe_name)
+
+        if self.dry_run:
+            self.logger.info(f"  [预览] 将保存附件: {safe_name} ({att['size']} bytes)")
+            return {
+                'type': '附件',
+                'filename': safe_name,
+                'path': str(dest.relative_to(self.target_dir)),
+                'size': att['size'],
+                'status': '预览',
+            }
 
         try:
             with open(dest, 'wb') as f:
@@ -1702,11 +1586,22 @@ class InvoiceDownloader:
             ext = Path(safe_name).suffix
             safe_name = f"{prefix}_{name_part}{ext}"
 
+        if self.dry_run:
+            self.logger.info(f"  [预览] 将下载链接: {safe_name} ({url[:80]}...)")
+            return {
+                'type': '链接下载',
+                'filename': safe_name,
+                'path': '',
+                'size': self._safe_int(content_length, 0),
+                'source_url': url,
+                'status': '预览',
+            }
+
         # 先下载到临时文件
         with tempfile.NamedTemporaryFile(delete=False, suffix=Path(safe_name).suffix) as tmp:
             tmp_path = Path(tmp.name)
 
-        expected_size = int(content_length) if content_length else None
+        expected_size = self._safe_int(content_length)
         success = self.downloader.download(url, tmp_path, expected_size)
 
         if not success:
@@ -1723,6 +1618,7 @@ class InvoiceDownloader:
             safe_name = Path(safe_name).stem + detected_ext
 
         # ---- SPA / 阅读器页面检测 ----
+        html_processed = False
         if tmp_path.suffix.lower() == '.html' or detected_ext == '.html':
             try:
                 html_content = tmp_path.read_text(encoding='utf-8', errors='replace')
@@ -1731,7 +1627,7 @@ class InvoiceDownloader:
                 # 无论 HTML 是否"空白"，都用 Playwright 尝试提取真实下载链接
                 if self._needs_spa_render(url):
                     self.logger.info(f"  检测到 SPA 页面，尝试 Playwright 渲染: {url[:60]}...")
-                    spa_urls = self._render_spa_page(url)
+                    spa_urls, spa_base64 = self._render_spa_page(url)
                     if spa_urls:
                         # 删除临时 HTML 文件，尝试下载 SPA 提取到的真实链接
                         tmp_path.unlink(missing_ok=True)
@@ -1751,7 +1647,19 @@ class InvoiceDownloader:
                             'status': 'SPA链接过期/失效，需手动从邮箱网页版下载',
                             'needs_manual_download': True,
                         }
-                    else:
+                    if spa_base64:
+                        # 从 SPA 渲染后的页面中提取 base64 数据
+                        best_data = max(spa_base64, key=len)
+                        tmp_path.write_bytes(best_data)
+                        self.logger.info(f"  从 SPA 页面提取 base64 数据 ({len(best_data)} bytes)")
+                        detected_ext = self._detect_extension(tmp_path, url)
+                        if detected_ext and tmp_path.suffix.lower() != detected_ext:
+                            new_tmp = tmp_path.with_suffix(detected_ext)
+                            tmp_path.rename(new_tmp)
+                            tmp_path = new_tmp
+                            safe_name = Path(safe_name).stem + detected_ext
+                        html_processed = True
+                    if not html_processed:
                         self.logger.info(f"  Playwright 未提取到有效链接，跳过")
                         tmp_path.unlink(missing_ok=True)
                         # 记录需要手动下载的链接
@@ -1767,12 +1675,19 @@ class InvoiceDownloader:
                         }
 
                 # 策略2: 如果是空白 SPA 页（Vue/React 等前端框架渲染的空白页）
-                if self._is_spa_empty_html(html_content):
+                if not html_processed and self._is_spa_empty_html(html_content):
                     # 先尝试提取 base64 内容
                     base64_datas = self._extract_base64_from_html(html_content)
                     if base64_datas:
-                        tmp_path.write_bytes(base64_datas[0])
-                        self.logger.info(f"  从 HTML 中提取 base64 数据 ({len(base64_datas[0])} bytes)")
+                        best_data = max(base64_datas, key=len)
+                        tmp_path.write_bytes(best_data)
+                        self.logger.info(f"  从 HTML 中提取 base64 数据 ({len(best_data)} bytes)")
+                        detected_ext = self._detect_extension(tmp_path, url)
+                        if detected_ext and tmp_path.suffix.lower() != detected_ext:
+                            new_tmp = tmp_path.with_suffix(detected_ext)
+                            tmp_path.rename(new_tmp)
+                            tmp_path = new_tmp
+                            safe_name = Path(safe_name).stem + detected_ext
                     else:
                         self.logger.info(f"  检测到 JS 渲染空白页，跳过: {safe_name}")
                         tmp_path.unlink(missing_ok=True)
@@ -1786,31 +1701,32 @@ class InvoiceDownloader:
                         }
 
                 # 策略3: 检测无实际发票数据的 HTML 阅读器/框架页面
-                has_base64 = len(self._extract_base64_from_html(html_content)) > 0
-                if not has_base64:
-                    html_lower = html_content.lower()
-                    reader_markers = [
-                        '绿页云', 'greenpaper', 'pdfviewer', 'viewercontainer',
-                        '在线阅读', '阅读器', 'webviewer', '发票查看', '电子发票查看',
-                        '在线预览', '发票预览', '发票阅读', 'greenpaper',
-                    ]
-                    is_reader_page = any(marker in html_lower for marker in reader_markers)
-                    # 或者页面内容极少（主要是脚本和样式，没有实际文本内容）
-                    text_only = re.sub(r'<[^>]+>', '', html_content)
-                    text_only = re.sub(r'\s+', '', text_only)
-                    is_mostly_scripts = len(text_only) < 200 and len(html_content) > 3000
+                if not html_processed:
+                    has_base64 = len(self._extract_base64_from_html(html_content)) > 0
+                    if not has_base64:
+                        html_lower = html_content.lower()
+                        reader_markers = [
+                            '绿页云', 'greenpaper', 'pdfviewer', 'viewercontainer',
+                            '在线阅读', '阅读器', 'webviewer', '发票查看', '电子发票查看',
+                            '在线预览', '发票预览', '发票阅读', 'greenpaper',
+                        ]
+                        is_reader_page = any(marker in html_lower for marker in reader_markers)
+                        # 或者页面内容极少（主要是脚本和样式，没有实际文本内容）
+                        text_only = re.sub(r'<[^>]+>', '', html_content)
+                        text_only = re.sub(r'\s+', '', text_only)
+                        is_mostly_scripts = len(text_only) < 200 and len(html_content) > 3000
 
-                    if is_reader_page or is_mostly_scripts:
-                        self.logger.info(f"  检测到在线阅读器/框架页面，无实际发票数据，跳过: {safe_name}")
-                        tmp_path.unlink(missing_ok=True)
-                        return {
-                            'type': '链接下载',
-                            'filename': safe_name,
-                            'path': '',
-                            'size': 0,
-                            'source_url': url,
-                            'status': '在线阅读器页面，跳过',
-                        }
+                        if is_reader_page or is_mostly_scripts:
+                            self.logger.info(f"  检测到在线阅读器/框架页面，无实际发票数据，跳过: {safe_name}")
+                            tmp_path.unlink(missing_ok=True)
+                            return {
+                                'type': '链接下载',
+                                'filename': safe_name,
+                                'path': '',
+                                'size': 0,
+                                'source_url': url,
+                                'status': '在线阅读器页面，跳过',
+                            }
             except Exception:
                 pass
 
@@ -1907,10 +1823,21 @@ class InvoiceDownloader:
             ext = Path(safe_name).suffix
             safe_name = f"{prefix}_{name_part}{ext}"
 
+        if self.dry_run:
+            self.logger.info(f"  [预览] 将下载SPA链接: {safe_name} ({url[:80]}...)")
+            return {
+                'type': '链接下载',
+                'filename': safe_name,
+                'path': '',
+                'size': self._safe_int(content_length, 0),
+                'source_url': source_url or url,
+                'status': '预览',
+            }
+
         with tempfile.NamedTemporaryFile(delete=False, suffix=Path(safe_name).suffix) as tmp:
             tmp_path = Path(tmp.name)
 
-        expected_size = int(content_length) if content_length else None
+        expected_size = self._safe_int(content_length)
         success = self.downloader.download(url, tmp_path, expected_size)
 
         if not success:
@@ -1930,20 +1857,27 @@ class InvoiceDownloader:
                 html_content = tmp_path.read_text(encoding='utf-8', errors='replace')
                 has_base64 = len(self._extract_base64_from_html(html_content)) > 0
 
-                # 1. 空白 SPA 页
-                if self._is_spa_empty_html(html_content):
-                    if has_base64:
-                        tmp_path.write_bytes(self._extract_base64_from_html(html_content)[0])
-                    else:
-                        self.logger.info(f"  SPA提取链接返回空白页，跳过: {url[:60]}...")
-                        tmp_path.unlink(missing_ok=True)
-                        return None
-
-                # 2. 需要浏览器渲染的已知 SPA 页面
+                # 1. 需要浏览器渲染的已知 SPA 页面
                 if self._needs_spa_render(url):
                     self.logger.info(f"  SPA提取链接仍需渲染，跳过: {url[:60]}...")
                     tmp_path.unlink(missing_ok=True)
                     return None
+
+                # 2. 空白 SPA 页
+                if self._is_spa_empty_html(html_content):
+                    base64_datas = self._extract_base64_from_html(html_content)
+                    if base64_datas:
+                        best_data = max(base64_datas, key=len)
+                        tmp_path.write_bytes(best_data)
+                        detected_ext = self._detect_extension(tmp_path, url)
+                        if detected_ext and tmp_path.suffix.lower() != detected_ext:
+                            new_tmp = tmp_path.with_suffix(detected_ext)
+                            tmp_path.rename(new_tmp)
+                            tmp_path = new_tmp
+                    else:
+                        self.logger.info(f"  SPA提取链接返回空白页，跳过: {url[:60]}...")
+                        tmp_path.unlink(missing_ok=True)
+                        return None
 
                 # 3. 没有 base64 实际数据的 HTML 阅读器页面
                 if not has_base64:
@@ -2134,7 +2068,7 @@ class InvoiceDownloader:
 
     @staticmethod
     def _sanitize_filename(name: str) -> str:
-        name = re.sub(r'[\\/:*?"<>>|]', '_', name)
+        name = re.sub(r'[\\/:*?"<>|]', '_', name)
         name = re.sub(r'[\x00-\x1f\x7f]', '', name)
         if len(name) > 200:
             stem = Path(name).stem[:100]
@@ -2167,99 +2101,12 @@ class InvoiceDownloader:
         prefix = re.sub(r'[^\w一-鿿]', '_', prefix)
         return prefix or 'invoice'
 
-    def _process_supplement_dir(self):
-        """处理 Supplemental 目录：将手动补充的发票归类到对应月份"""
-        supplement_dir = self.target_dir.parent / 'Supplemental'
-        supplement_dir.mkdir(parents=True, exist_ok=True)
-
-        invoice_exts = {'.pdf', '.ofd', '.png', '.jpg', '.jpeg', '.gif', '.webp', '.xml'}
-        files = [f for f in supplement_dir.iterdir() if f.is_file() and f.suffix.lower() in invoice_exts]
-
-        if not files:
-            return
-
-        self.logger.info(f"📂 发现 {len(files)} 个补充发票，开始归类...")
-        moved_count = 0
-        skip_count = 0
-
-        for src_path in files:
-            content_hash = self._compute_file_hash(src_path)
-
-            # 查重
-            if self.db.hash_exists(content_hash):
-                self.logger.info(f"  补充发票已存在，跳过: {src_path.name}")
-                skip_count += 1
-                continue
-
-            # 提取日期用于月份归类
-            invoice_date = self._extract_invoice_date(src_path)
-            if invoice_date:
-                month_dir = self.target_dir / invoice_date.strftime('%Y-%m')
-                date_display = invoice_date.strftime('%Y-%m-%d')
-            else:
-                month_dir = self.target_dir / 'unknown'
-                date_display = '未知'
-            month_dir.mkdir(parents=True, exist_ok=True)
-
-            # 尝试重命名（提取发票号码）
-            dest = self._unique_path(month_dir / src_path.name)
-            try:
-                import shutil
-                shutil.move(str(src_path), str(dest))
-            except Exception as e:
-                self.logger.error(f"  移动失败: {src_path.name} -> {e}")
-                continue
-
-            # 再次尝试从内容重命名
-            dest = self._try_rename_with_invoice_id(dest)
-
-            # 提取发票信息
-            file_size = dest.stat().st_size
-            invoice_id = self._extract_invoice_id(dest.name)
-            file_format = dest.suffix
-            amount = self._extract_amount(dest)
-
-            # 记录到数据库
-            if not self.db.record_file(
-                invoice_id=invoice_id,
-                content_hash=content_hash,
-                file_path=str(dest.absolute()),
-                file_format=file_format,
-                file_size=file_size,
-                source_email='手动补充',
-                source_url='',
-            ):
-                self.logger.info(f"  发票 {invoice_id or 'N/A'} 已有更高优先级格式，跳过: {dest.name}")
-                skip_count += 1
-                continue
-
-            moved_count += 1
-            self.logger.success(
-                f"  归类补充发票: {dest.name}"
-                f" -> {month_dir.name}"
-                f"{f' 金额:¥{amount:.2f}' if amount else ''}"
-            )
-
-            # 添加到 records 以便在报告中显示
-            record = {
-                'msg_id': 'supplement',
-                'subject': '【手动补充发票】',
-                'from': '手动补充目录',
-                'date': invoice_date.isoformat() if invoice_date else '',
-                'date_display': date_display,
-                'month': invoice_date.strftime('%Y-%m') if invoice_date else 'unknown',
-                'files': [{
-                    'type': '手动补充',
-                    'filename': dest.name,
-                    'path': str(dest.relative_to(self.target_dir)),
-                    'size': file_size,
-                    'status': '成功',
-                    'amount': amount,
-                }],
-            }
-            self.records.append(record)
-
-        self.logger.info(f"📂 补充发票归类完成: 移动 {moved_count} 个, 跳过 {skip_count} 个")
+    @staticmethod
+    def _safe_int(value, default=None):
+        try:
+            return int(value) if value is not None else default
+        except (ValueError, TypeError):
+            return default
 
     def _print_stats(self):
         self.logger.info("=" * 50)

@@ -1,35 +1,19 @@
-# 下载的发票文件
+# 配置文件（含密码）
+config.json
+
+# 发票数据目录
+2026.4.03~2026.6.9/
 invoices/
 Supplemental/
-*.pdf
-*.png
-*.jpg
-*.jpeg
-*.gif
-*.ofd
-*.xml
 
-# 配置文件（可能包含密码）
-config.json
-my-config.json
-config.local.json
+# 生成的报告
+reports/
 
-# 日志
-logs/
-*.log
-
-# Python
-__pycache__/
-*.pyc
-*.pyo
-venv/
-.env
-
-# macOS
-.DS_Store
-
-# 数据库
-db/
+# 数据库和日志
 *.db
-*.sqlite
-*.sqlite3
+*.log
+.web_run.log
+.start_py_pid
+
+# 系统文件
+.DS_Store

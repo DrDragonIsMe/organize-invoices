@@ -4,22 +4,17 @@
   "use_ssl": true,
   "email": "your-email@example.com",
   "password": "your-password-or-app-specific-password",
+  "search_keywords": ["发票", "电票"],
+  "folders": ["ALL"],
+  "blocked_senders": [],
   "date_range": {
     "since": "2026-01-01",
     "before": "2026-06-30"
   },
   "target_dir": "./invoices",
-  "search_keywords": ["发票", "电票"],
-  "folders": ["ALL"],
-  "link_filters": {
-    "domain_whitelist": [],
-    "url_patterns": [
-      "\\.(pdf|png|jpg|jpeg)$",
-      "invoice",
-      "fapiao",
-      "发票"
-    ]
-  },
+  "log_file": "download.log",
+  "timeout": 60,
+  "max_retries": 3,
   "headers": {
     "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
   }

@@ -1,0 +1,901 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>发票下载工具</title>
+    <style>
+        :root {
+            --primary: #3370ff;
+            --primary-dark: #2b5fd9;
+            --success: #34d399;
+            --danger: #f87171;
+            --warning: #fbbf24;
+            --bg: #f0f2f5;
+            --card-bg: #ffffff;
+            --text: #1f2937;
+            --text-secondary: #6b7280;
+            --border: #e5e7eb;
+            --radius: 10px;
+            --shadow: 0 4px 20px rgba(0,0,0,0.06);
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            line-height: 1.6;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+        }
+
+        header {
+            text-align: center;
+            margin-bottom: 28px;
+        }
+
+        header h1 {
+            font-size: 26px;
+            font-weight: 700;
+            color: var(--text);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+        }
+
+        header p {
+            color: var(--text-secondary);
+            font-size: 14px;
+            margin-top: 4px;
+        }
+
+        .card {
+            background: var(--card-bg);
+            border-radius: var(--radius);
+            box-shadow: var(--shadow);
+            padding: 24px;
+            margin-bottom: 20px;
+        }
+
+        .card-title {
+            font-size: 16px;
+            font-weight: 600;
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            color: var(--text);
+        }
+
+        .form-row {
+            display: flex;
+            gap: 16px;
+            margin-bottom: 14px;
+            flex-wrap: wrap;
+        }
+
+        .form-group {
+            flex: 1;
+            min-width: 200px;
+        }
+
+        .form-group.full {
+            flex: 1 1 100%;
+        }
+
+        label {
+            display: block;
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--text-secondary);
+            margin-bottom: 6px;
+        }
+
+        input[type="text"],
+        input[type="password"],
+        input[type="number"],
+        input[type="date"],
+        textarea,
+        select {
+            width: 100%;
+            padding: 10px 12px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            font-size: 14px;
+            font-family: inherit;
+            background: #fafbfc;
+            transition: border-color .2s, box-shadow .2s;
+        }
+
+        input:focus, textarea:focus, select:focus {
+            outline: none;
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px rgba(51, 112, 255, 0.1);
+            background: #fff;
+        }
+
+        textarea {
+            resize: vertical;
+            min-height: 72px;
+        }
+
+        .hint {
+            font-size: 12px;
+            color: var(--text-secondary);
+            margin-top: 4px;
+        }
+
+        .tag-input {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            padding: 6px 10px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: #fafbfc;
+            min-height: 42px;
+            align-items: center;
+        }
+
+        .tag-input:focus-within {
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px rgba(51, 112, 255, 0.1);
+            background: #fff;
+        }
+
+        .tag {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            background: #e8f0fe;
+            color: var(--primary-dark);
+            font-size: 12px;
+            padding: 4px 10px;
+            border-radius: 20px;
+        }
+
+        .tag .remove {
+            cursor: pointer;
+            font-weight: 700;
+            opacity: .7;
+        }
+
+        .tag .remove:hover { opacity: 1; }
+
+        .tag-input input {
+            flex: 1;
+            min-width: 80px;
+            border: none;
+            background: transparent;
+            padding: 4px;
+            font-size: 14px;
+            outline: none;
+        }
+
+        .btn-group {
+            display: flex;
+            gap: 12px;
+            justify-content: center;
+            margin-top: 8px;
+            flex-wrap: wrap;
+        }
+
+        .btn {
+            padding: 12px 28px;
+            border: none;
+            border-radius: 8px;
+            font-size: 15px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform .1s, opacity .2s;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .btn:active { transform: scale(0.98); }
+        .btn:disabled { opacity: .5; cursor: not-allowed; }
+
+        .btn-primary {
+            background: var(--primary);
+            color: #fff;
+        }
+
+        .btn-primary:hover:not(:disabled) { background: var(--primary-dark); }
+
+        .btn-secondary {
+            background: #e5e7eb;
+            color: var(--text);
+        }
+
+        .btn-secondary:hover:not(:disabled) { background: #d1d5db; }
+
+        .btn-danger {
+            background: var(--danger);
+            color: #fff;
+        }
+
+        .btn-small {
+            padding: 8px 16px;
+            font-size: 13px;
+        }
+
+        .log-container {
+            background: #1e1e2e;
+            color: #cdd6f4;
+            border-radius: 8px;
+            padding: 14px;
+            font-family: "SF Mono", Monaco, "Cascadia Code", monospace;
+            font-size: 13px;
+            line-height: 1.7;
+            max-height: 360px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+
+        .log-container .timestamp { color: #6c7086; }
+        .log-container .level-info { color: #89dceb; }
+        .log-container .level-ok { color: #a6e3a1; }
+        .log-container .level-warn { color: #f9e2af; }
+        .log-container .level-error { color: #f38ba8; }
+
+        .status-bar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 12px;
+            font-size: 13px;
+        }
+
+        .status-indicator {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--text-secondary);
+        }
+
+        .dot.running { background: var(--success); box-shadow: 0 0 0 3px rgba(52, 211, 153, 0.3); }
+
+        /* 报告列表 */
+        .report-list {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .report-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 10px 14px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+            transition: background .2s;
+        }
+
+        .report-item:hover {
+            background: #e8f0fe;
+            border-color: var(--primary);
+        }
+
+        .report-info {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+            overflow: hidden;
+        }
+
+        .report-name {
+            font-size: 14px;
+            font-weight: 500;
+            color: var(--text);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .report-meta {
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+
+        .report-actions {
+            display: flex;
+            gap: 8px;
+            flex-shrink: 0;
+        }
+
+        .report-empty {
+            color: var(--text-secondary);
+            font-size: 14px;
+            text-align: center;
+            padding: 20px;
+        }
+
+        /* 复选框组 */
+        .checkbox-group {
+            display: flex;
+            gap: 20px;
+            flex-wrap: wrap;
+        }
+
+        .checkbox-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 14px;
+            cursor: pointer;
+        }
+
+        .checkbox-item input[type="checkbox"] {
+            width: 16px;
+            height: 16px;
+            accent-color: var(--primary);
+            cursor: pointer;
+        }
+
+        .toast {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: var(--card-bg);
+            color: var(--text);
+            padding: 12px 20px;
+            border-radius: 8px;
+            box-shadow: var(--shadow);
+            font-size: 14px;
+            z-index: 1000;
+            transform: translateX(140%);
+            transition: transform .3s ease;
+        }
+
+        .toast.show { transform: translateX(0); }
+        .toast.success { border-left: 4px solid var(--success); }
+        .toast.error { border-left: 4px solid var(--danger); }
+
+        .tip-box {
+            background: #e8f4fd;
+            border-left: 4px solid var(--primary);
+            border-radius: 6px;
+            padding: 12px 16px;
+            font-size: 13px;
+            color: var(--text-secondary);
+            line-height: 1.7;
+        }
+
+        .tip-box strong {
+            color: var(--primary-dark);
+        }
+
+        .hidden { display: none; }
+
+        @media (max-width: 600px) {
+            .form-row { flex-direction: column; gap: 0; }
+            .btn-group { flex-direction: column; }
+            .btn { width: 100%; justify-content: center; }
+            .report-item { flex-direction: column; align-items: flex-start; gap: 8px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>📧 发票下载工具</h1>
+            <p>配置 IMAP 邮箱参数，自动下载邮件中的发票附件和链接</p>
+        </header>
+
+        <!-- 邮件配置 -->
+        <div class="card">
+            <div class="card-title">🔐 邮件服务器配置</div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>IMAP 服务器</label>
+                    <input type="text" id="imap_server" placeholder="如 imap.163.com">
+                </div>
+                <div class="form-group">
+                    <label>端口</label>
+                    <input type="number" id="imap_port" placeholder="993">
+                </div>
+                <div class="form-group" style="flex:0;min-width:100px">
+                    <label>SSL</label>
+                    <select id="use_ssl">
+                        <option value="true">启用</option>
+                        <option value="false">禁用</option>
+                    </select>
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>邮箱地址</label>
+                    <input type="text" id="email" placeholder="yourname@example.com">
+                </div>
+                <div class="form-group">
+                    <label>密码 / 授权码</label>
+                    <input type="password" id="password" placeholder="邮箱密码或 IMAP 授权码">
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>搜索文件夹</label>
+                    <input type="text" id="folders" placeholder="INBOX 或 ALL">
+                    <div class="hint">多个用逗号分隔，填 ALL 搜索所有文件夹</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 搜索配置 -->
+        <div class="card">
+            <div class="card-title">🔍 搜索条件</div>
+            <div class="form-row">
+                <div class="form-group full">
+                    <label>标题关键词</label>
+                    <div class="tag-input" id="keywords_input">
+                        <input type="text" placeholder="输入后按回车添加" id="keywords_raw">
+                    </div>
+                    <div class="hint">邮件标题包含任一关键词即匹配，默认「发票」</div>
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group full">
+                    <label>黑名单发件人域名（可选）</label>
+                    <div class="tag-input" id="blocked_input">
+                        <input type="text" placeholder="输入后按回车添加，如 newsletter.com" id="blocked_raw">
+                    </div>
+                    <div class="hint">来自这些域名的邮件将跳过正文匹配</div>
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>起始日期</label>
+                    <input type="date" id="date_since">
+                </div>
+                <div class="form-group">
+                    <label>结束日期（不包含）</label>
+                    <input type="date" id="date_before">
+                </div>
+            </div>
+        </div>
+
+        <!-- 输出配置 -->
+        <div class="card">
+            <div class="card-title">📁 输出设置</div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>保存目录</label>
+                    <input type="text" id="target_dir" placeholder="invoices">
+                </div>
+                <div class="form-group">
+                    <label>日志文件</label>
+                    <input type="text" id="log_file" placeholder="download.log">
+                </div>
+            </div>
+        </div>
+
+        <!-- 操作按钮 -->
+        <div class="card">
+            <div class="btn-group">
+                <button class="btn btn-secondary" id="btn_preview" onclick="runTask(true)">
+                    👁️ 仅预览
+                </button>
+                <button class="btn btn-primary" id="btn_run" onclick="runTask(false)">
+                    🚀 开始下载
+                </button>
+                <button class="btn btn-danger hidden" id="btn_stop" onclick="stopTask()">
+                    ⏹ 停止
+                </button>
+            </div>
+        </div>
+
+        <!-- 目录管理 -->
+        <div class="card">
+            <div class="card-title">📂 目录管理</div>
+            <div class="btn-group">
+                <button class="btn btn-secondary btn-small" onclick="openFolder('invoices')">
+                    📁 打开发票目录
+                </button>
+                <button class="btn btn-secondary btn-small" onclick="openFolder('supplemental')">
+                    📁 打开补充目录
+                </button>
+                <button class="btn btn-secondary btn-small" onclick="openFolder('reports')">
+                    📁 打开报告目录
+                </button>
+            </div>
+        </div>
+
+        <!-- 扫描并生成报告 -->
+        <div class="card">
+            <div class="card-title">🔄 扫描目录并生成报告</div>
+            <div class="hint" style="margin-bottom:12px">
+                每次执行都会<strong>重新扫描 invoices 目录</strong>，报告会反映最新的文件增删改情况。
+            </div>
+            <div class="checkbox-group" style="margin-bottom:14px">
+                <label class="checkbox-item" title="将 Supplemental 目录里的文件自动归类到 invoices 对应月份">
+                    <input type="checkbox" id="opt_supplement" checked>
+                    <span>处理 Supplemental 补充目录</span>
+                </label>
+                <label class="checkbox-item" title="如果你手动增删或替换过 invoices 目录里的文件，请勾选此项同步查重索引">
+                    <input type="checkbox" id="opt_rebuild_db">
+                    <span>重建查重索引</span>
+                </label>
+                <label class="checkbox-item" title="只模拟运行，不实际移动文件">
+                    <input type="checkbox" id="opt_dry_run">
+                    <span>仅预览</span>
+                </label>
+            </div>
+            <div class="tip-box" style="margin-bottom:16px">
+                <strong>💡 什么时候勾选「重建查重索引」？</strong><br>
+                查重索引是 SQLite 数据库，记录每张发票的内容哈希，防止重复下载。
+                如果你<strong>手动增删、替换或重命名</strong>了 invoices 目录里的文件，数据库就和实际文件对不上了，
+                下次邮件下载时可能会误判重复或漏过去重。勾选此项会重新计算所有文件的哈希，重建索引。
+            </div>
+            <div class="btn-group">
+                <button class="btn btn-primary" id="btn_regen" onclick="regenerateReport()">
+                    📝 扫描并生成报告
+                </button>
+            </div>
+        </div>
+
+        <!-- 报告列表 -->
+        <div class="card">
+            <div class="status-bar">
+                <div class="card-title" style="margin:0">📊 已生成报告</div>
+                <button class="btn btn-secondary btn-small" onclick="loadReports()">🔄 刷新</button>
+            </div>
+            <div id="reports_box">
+                <div class="report-empty">加载中...</div>
+            </div>
+        </div>
+
+        <!-- 日志 -->
+        <div class="card" id="log_card" style="display:none">
+            <div class="status-bar">
+                <div class="card-title" style="margin:0">📋 运行日志</div>
+                <div class="status-indicator">
+                    <span class="dot" id="status_dot"></span>
+                    <span id="status_text">就绪</span>
+                </div>
+            </div>
+            <div class="log-container" id="log_box">等待任务启动...</div>
+        </div>
+    </div>
+
+    <div class="toast" id="toast"></div>
+
+    <script>
+    // ==================== 全局状态 ====================
+    let config = {};
+    let logTimer = null;
+    let isRunning = false;
+    let currentTaskType = ''; // 'download' | 'regenerate'
+
+    // ==================== 标签输入组件 ====================
+    function setupTagInput(containerId, rawId) {
+        const container = document.getElementById(containerId);
+        const raw = document.getElementById(rawId);
+        const tags = new Set();
+
+        function render() {
+            container.querySelectorAll('.tag').forEach(t => t.remove());
+            tags.forEach(text => {
+                const tag = document.createElement('span');
+                tag.className = 'tag';
+                tag.innerHTML = `${text}<span class="remove">&times;</span>`;
+                tag.querySelector('.remove').onclick = () => { tags.delete(text); render(); };
+                container.insertBefore(tag, raw);
+            });
+        }
+
+        raw.addEventListener('keydown', e => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                const v = raw.value.trim();
+                if (v && !tags.has(v)) { tags.add(v); render(); }
+                raw.value = '';
+            }
+            if (e.key === 'Backspace' && !raw.value && tags.size > 0) {
+                const arr = Array.from(tags);
+                tags.delete(arr[arr.length - 1]);
+                render();
+            }
+        });
+
+        return {
+            get: () => Array.from(tags),
+            set: (arr) => { tags.clear(); (arr || []).forEach(t => tags.add(String(t))); render(); },
+        };
+    }
+
+    const keywordsMgr = setupTagInput('keywords_input', 'keywords_raw');
+    const blockedMgr = setupTagInput('blocked_input', 'blocked_raw');
+
+    // ==================== 配置读写 ====================
+    function gatherConfig() {
+        return {
+            imap_server: document.getElementById('imap_server').value.trim(),
+            imap_port: parseInt(document.getElementById('imap_port').value) || 993,
+            use_ssl: document.getElementById('use_ssl').value === 'true',
+            email: document.getElementById('email').value.trim(),
+            password: document.getElementById('password').value,
+            folders: document.getElementById('folders').value.split(/[,，]/).map(s => s.trim()).filter(Boolean),
+            search_keywords: keywordsMgr.get(),
+            blocked_senders: blockedMgr.get(),
+            date_range: {
+                ...(document.getElementById('date_since').value ? { since: document.getElementById('date_since').value } : {}),
+                ...(document.getElementById('date_before').value ? { before: document.getElementById('date_before').value } : {}),
+            },
+            target_dir: document.getElementById('target_dir').value.trim() || 'invoices',
+            log_file: document.getElementById('log_file').value.trim() || 'download.log',
+        };
+    }
+
+    function applyConfig(cfg) {
+        config = cfg || {};
+        document.getElementById('imap_server').value = config.imap_server || '';
+        document.getElementById('imap_port').value = config.imap_port || 993;
+        document.getElementById('use_ssl').value = String(config.use_ssl !== false);
+        document.getElementById('email').value = config.email || '';
+        document.getElementById('password').value = config.password || '';
+        document.getElementById('folders').value = Array.isArray(config.folders) ? config.folders.join(', ') : (config.folders || 'INBOX');
+        keywordsMgr.set(Array.isArray(config.search_keywords) ? config.search_keywords : (config.search_keyword ? [config.search_keyword] : ['发票']));
+        blockedMgr.set(config.blocked_senders || []);
+
+        const dr = config.date_range || {};
+        document.getElementById('date_since').value = dr.since || '';
+        document.getElementById('date_before').value = dr.before || '';
+        document.getElementById('target_dir').value = config.target_dir || 'invoices';
+        document.getElementById('log_file').value = config.log_file || 'download.log';
+    }
+
+    async function loadConfig() {
+        try {
+            const res = await fetch('/api/config');
+            const data = await res.json();
+            if (data.success) {
+                applyConfig(data.config);
+                showToast('配置已加载', 'success');
+            }
+        } catch (e) {
+            showToast('加载配置失败: ' + e.message, 'error');
+        }
+    }
+
+    async function saveConfig() {
+        const cfg = gatherConfig();
+        try {
+            const res = await fetch('/api/config', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ config: cfg }),
+            });
+            const data = await res.json();
+            if (data.success) {
+                showToast('配置已自动保存', 'success');
+                return true;
+            } else {
+                showToast('保存失败: ' + (data.error || '未知错误'), 'error');
+                return false;
+            }
+        } catch (e) {
+            showToast('保存失败: ' + e.message, 'error');
+            return false;
+        }
+    }
+
+    // ==================== 任务控制 ====================
+    async function runTask(dryRun) {
+        const ok = await saveConfig();
+        if (!ok) return;
+
+        try {
+            const res = await fetch('/api/run', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ dry_run: dryRun }),
+            });
+            const data = await res.json();
+            if (data.success) {
+                isRunning = true;
+                currentTaskType = 'download';
+                document.getElementById('log_card').style.display = 'block';
+                document.getElementById('status_dot').classList.add('running');
+                document.getElementById('status_text').textContent = dryRun ? '预览运行中...' : '下载运行中...';
+                setButtonsDisabled(true);
+                startLogPolling();
+                showToast(dryRun ? '预览任务已启动' : '下载任务已启动', 'success');
+            } else {
+                showToast(data.error || '启动失败', 'error');
+            }
+        } catch (e) {
+            showToast('启动失败: ' + e.message, 'error');
+        }
+    }
+
+    async function regenerateReport() {
+        const ok = await saveConfig();
+        if (!ok) return;
+
+        const supplement = document.getElementById('opt_supplement').checked;
+        const rebuildDb = document.getElementById('opt_rebuild_db').checked;
+        const dryRun = document.getElementById('opt_dry_run').checked;
+
+        try {
+            const res = await fetch('/api/regenerate', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ supplement, rebuild_db: rebuildDb, dry_run: dryRun }),
+            });
+            const data = await res.json();
+            if (data.success) {
+                isRunning = true;
+                currentTaskType = 'regenerate';
+                document.getElementById('log_card').style.display = 'block';
+                document.getElementById('status_dot').classList.add('running');
+                document.getElementById('status_text').textContent = dryRun ? '扫描预览中...' : '扫描并生成中...';
+                setButtonsDisabled(true);
+                startLogPolling();
+                showToast(dryRun ? '扫描预览已启动' : '扫描并生成已启动', 'success');
+            } else {
+                showToast(data.error || '启动失败', 'error');
+            }
+        } catch (e) {
+            showToast('启动失败: ' + e.message, 'error');
+        }
+    }
+
+    async function stopTask() {
+        try {
+            const res = await fetch('/api/stop', { method: 'POST' });
+            const data = await res.json();
+            if (data.success) {
+                showToast('已发送停止信号', 'success');
+            }
+        } catch (e) {
+            showToast('停止失败: ' + e.message, 'error');
+        }
+    }
+
+    function setButtonsDisabled(disabled) {
+        document.getElementById('btn_run').disabled = disabled;
+        document.getElementById('btn_preview').disabled = disabled;
+        document.getElementById('btn_regen').disabled = disabled;
+        const stopBtn = document.getElementById('btn_stop');
+        if (disabled) stopBtn.classList.remove('hidden');
+        else stopBtn.classList.add('hidden');
+    }
+
+    function startLogPolling() {
+        if (logTimer) clearInterval(logTimer);
+        logTimer = setInterval(async () => {
+            try {
+                const res = await fetch('/api/log');
+                const data = await res.json();
+                if (data.success) {
+                    const box = document.getElementById('log_box');
+                    box.textContent = data.log || '等待输出...';
+                    box.scrollTop = box.scrollHeight;
+                }
+            } catch (e) {}
+
+            try {
+                const res = await fetch('/api/status');
+                const data = await res.json();
+                if (!data.running && isRunning) {
+                    isRunning = false;
+                    document.getElementById('status_dot').classList.remove('running');
+                    document.getElementById('status_text').textContent = '已完成';
+                    setButtonsDisabled(false);
+                    showToast('任务已完成', 'success');
+                    loadReports(); // 刷新报告列表
+                }
+            } catch (e) {}
+        }, 800);
+    }
+
+    // ==================== 目录操作 ====================
+    async function openFolder(type) {
+        try {
+            const res = await fetch('/api/open-folder', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ type }),
+            });
+            const data = await res.json();
+            if (data.success) {
+                showToast('已打开文件夹', 'success');
+            } else {
+                showToast(data.error || '打开失败', 'error');
+            }
+        } catch (e) {
+            showToast('打开失败: ' + e.message, 'error');
+        }
+    }
+
+    // ==================== 报告列表 ====================
+    async function loadReports() {
+        try {
+            const res = await fetch('/api/reports');
+            const data = await res.json();
+            const box = document.getElementById('reports_box');
+            if (!data.success || !data.reports || data.reports.length === 0) {
+                box.innerHTML = '<div class="report-empty">暂无报告，运行下载或重新生成报告后会在这里显示</div>';
+                return;
+            }
+            box.innerHTML = data.reports.map(r => `
+                <div class="report-item">
+                    <div class="report-info">
+                        <div class="report-name">${r.name}</div>
+                        <div class="report-meta">${r.mtime_str} · ${formatSize(r.size)}</div>
+                    </div>
+                    <div class="report-actions">
+                        <a class="btn btn-primary btn-small" href="${r.path}" target="_blank">查看</a>
+                        <button class="btn btn-danger btn-small" onclick="deleteReport('${r.name}')">🗑 删除</button>
+                    </div>
+                </div>
+            `).join('');
+        } catch (e) {
+            document.getElementById('reports_box').innerHTML = '<div class="report-empty">加载失败: ' + e.message + '</div>';
+        }
+    }
+
+    function formatSize(bytes) {
+        if (bytes < 1024) return bytes + 'B';
+        if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + 'KB';
+        return (bytes / (1024 * 1024)).toFixed(1) + 'MB';
+    }
+
+    // ==================== UI 工具 ====================
+    function showToast(msg, type) {
+        const toast = document.getElementById('toast');
+        toast.textContent = msg;
+        toast.className = 'toast ' + type;
+        setTimeout(() => toast.classList.add('show'), 10);
+        setTimeout(() => toast.classList.remove('show'), 2500);
+    }
+
+    // ==================== 报告操作 ====================
+    async function deleteReport(name) {
+        if (!confirm(`确定要删除报告「${name}」吗？对应的 JSON 文件也会一并删除。`)) return;
+        try {
+            const res = await fetch('/api/delete-report', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name }),
+            });
+            const data = await res.json();
+            if (data.success) {
+                showToast('已删除: ' + data.deleted.join(', '), 'success');
+                loadReports();
+            } else {
+                showToast(data.error || '删除失败', 'error');
+            }
+        } catch (e) {
+            showToast('删除失败: ' + e.message, 'error');
+        }
+    }
+
+    // 输入框失焦时自动保存
+    document.querySelectorAll('input, textarea, select').forEach(el => {
+        el.addEventListener('change', () => saveConfig());
+    });
+
+    // 初始化
+    loadConfig();
+    loadReports();
+    </script>
+</body>
+</html>
