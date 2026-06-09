@@ -971,7 +971,7 @@ class ReportGenerator:
 
         <div class="summary">
             <strong>说明：</strong>本报告由脚本自动生成，展示从邮箱中提取的发票邮件及其对应文件。
-            文件保存在 <code>{self.target_dir.absolute()}</code> 目录下，按月份分文件夹存放。
+            文件保存在 <code>{str(self.target_dir.absolute()).replace(str(Path.home()), "~")}</code> 目录下，按月份分文件夹存放。
         </div>
     </div>
 </body>
