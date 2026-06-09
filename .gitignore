@@ -1,0 +1,35 @@
+# 下载的发票文件
+invoices/
+Supplemental/
+*.pdf
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.ofd
+*.xml
+
+# 配置文件（可能包含密码）
+config.json
+my-config.json
+config.local.json
+
+# 日志
+logs/
+*.log
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+venv/
+.env
+
+# macOS
+.DS_Store
+
+# 数据库
+db/
+*.db
+*.sqlite
+*.sqlite3
