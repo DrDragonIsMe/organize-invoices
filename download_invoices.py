@@ -1154,6 +1154,34 @@ class InvoiceDownloader:
             return self._extract_amount_from_pdf(path)
         return None
 
+    def _validate_invoice_content(self, path: Path) -> bool:
+        """验证文件内容是否像真实发票，过滤掉图标、占位图等非发票文件"""
+        ext = path.suffix.lower()
+        file_size = path.stat().st_size
+
+        # 图片格式：检查文件大小和尺寸，过滤掉邮件中的对勾/图标等小图片
+        if ext in ('.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp'):
+            if file_size < 10240:  # 小于 10KB 大概率是图标/对勾
+                return False
+            try:
+                from PIL import Image
+                with Image.open(path) as img:
+                    w, h = img.size
+                    if w < 300 or h < 300:
+                        return False
+            except Exception:
+                pass
+
+        # PDF/OFD：如果完全无法提取任何发票特征（号码、金额、日期），可能不是发票
+        if ext in ('.pdf', '.ofd'):
+            has_id = self._extract_invoice_id_from_file(path) is not None
+            has_amount = self._extract_amount(path) is not None
+            has_date = self._extract_invoice_date(path) is not None
+            if not has_id and not has_amount and not has_date:
+                return False
+
+        return True
+
     # ---- 日期提取（用于 Supplemental 目录归类） ----
 
     @staticmethod
@@ -1510,6 +1538,19 @@ class InvoiceDownloader:
         # 尝试从文件内容中提取发票号码并重命名
         dest = self._try_rename_with_invoice_id(dest)
 
+        # 验证内容是否真的是发票
+        if not self._validate_invoice_content(dest):
+            file_size = dest.stat().st_size
+            self.logger.warning(f"  内容不像发票，删除: {dest.name}")
+            dest.unlink(missing_ok=True)
+            return {
+                'type': '附件',
+                'filename': dest.name,
+                'path': '',
+                'size': file_size,
+                'status': '内容无效/非发票',
+            }
+
         # 2. 发票级跨格式去重
         invoice_id = self._extract_invoice_id(dest.name)
         file_format = Path(dest.name).suffix
@@ -1756,6 +1797,20 @@ class InvoiceDownloader:
         # 尝试从文件内容中提取发票号码并重命名
         dest = self._try_rename_with_invoice_id(dest)
 
+        # 验证内容是否真的是发票
+        if not self._validate_invoice_content(dest):
+            file_size = dest.stat().st_size
+            self.logger.warning(f"  内容不像发票，删除: {dest.name}")
+            dest.unlink(missing_ok=True)
+            return {
+                'type': '链接下载',
+                'filename': dest.name,
+                'path': '',
+                'size': file_size,
+                'source_url': url,
+                'status': '内容无效/非发票',
+            }
+
         file_size = dest.stat().st_size
         invoice_id = self._extract_invoice_id(dest.name)
         file_format = dest.suffix
@@ -1914,6 +1969,13 @@ class InvoiceDownloader:
 
         # 尝试从文件内容中提取发票号码并重命名
         dest = self._try_rename_with_invoice_id(dest)
+
+        # 验证内容是否真的是发票
+        if not self._validate_invoice_content(dest):
+            file_size = dest.stat().st_size
+            self.logger.warning(f"  内容不像发票，删除: {dest.name}")
+            dest.unlink(missing_ok=True)
+            return None
 
         file_size = dest.stat().st_size
         invoice_id = self._extract_invoice_id(dest.name)
