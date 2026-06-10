@@ -732,6 +732,10 @@ class ReportGenerator:
 
             file_size = dest.stat().st_size
             invoice_id = self.parser.extract_invoice_id_from_filename(dest.name)
+            # 优先从文件内容提取真实发票号码，避免文件名临时标识（mt:xxx）导致同一发票被重复记录
+            content_id = self.parser.extract_invoice_id_from_file(dest)
+            if content_id:
+                invoice_id = content_id
             file_format = dest.suffix
             amount = self.parser.extract_amount(dest)
 
@@ -813,7 +817,15 @@ class ReportGenerator:
                         pass
                 amt_str = f' <span style="color:#e67e22;font-weight:600">¥{amt:.2f}</span>' if amt else ''
                 if amt is not None and f.get('status') == '成功':
-                    inv_id = self.parser.extract_invoice_id_from_filename(f['filename']) or f['filename']
+                    inv_id = self.parser.extract_invoice_id_from_filename(f['filename'])
+                    # 文件名标识不可靠（如 mt:xxx）时，回退到文件内容提取真实号码
+                    if not inv_id or inv_id.startswith('mt:') or len(inv_id) < 20:
+                        if fp and fp.exists():
+                            content_id = self.parser.extract_invoice_id_from_file(fp)
+                            if content_id:
+                                inv_id = content_id
+                    if not inv_id:
+                        inv_id = f['filename']
                     if inv_id not in invoice_summary:
                         number = ''
                         date_str = ''
@@ -1022,6 +1034,10 @@ class ReportGenerator:
 
                 content_hash = self.parser.compute_file_hash(fp)
                 invoice_id = self.parser.extract_invoice_id_from_filename(fp.name)
+                # 回退到文件内容提取真实号码，避免临时标识导致重复
+                content_id = self.parser.extract_invoice_id_from_file(fp)
+                if content_id:
+                    invoice_id = content_id
                 file_format = fp.suffix
                 file_size = fp.stat().st_size
 
