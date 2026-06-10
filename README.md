@@ -2,9 +2,9 @@
 
 自动从邮箱中检索标题含「发票」的邮件，下载附件和邮件正文中的发票下载链接，按月份分目录存放。
 
-![image-20260610090016861](/Users/changxinglong/Library/Application Support/typora-user-images/image-20260610090016861.png)
+![image-20260610090016861](docs/images/image-20260610090016861.png)
 
-![image-20260610090239170](/Users/changxinglong/Library/Application Support/typora-user-images/image-20260610090239170.png)
+![image-20260610090239170](docs/images/image-20260610090239170.png)
 
 ## 功能特性
 
