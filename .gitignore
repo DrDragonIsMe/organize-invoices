@@ -1,8 +1,9 @@
 # 配置文件（含密码）
 config.json
 
-# 发票数据目录
+# 发票数据目录（含各种命名变体）
 2026.4.03~2026.6.9/
+2026.4.03~2026.6.9*/
 invoices/
 Supplemental/
 
@@ -14,6 +15,13 @@ reports/
 *.log
 .web_run.log
 .start_py_pid
+
+# Python 缓存
+__pycache__/
+*.pyc
+
+# 根目录下生成的文档 PDF
+/README.pdf
 
 # 系统文件
 .DS_Store

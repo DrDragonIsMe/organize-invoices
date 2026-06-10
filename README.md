@@ -2,6 +2,10 @@
 
 自动从邮箱中检索标题含「发票」的邮件，下载附件和邮件正文中的发票下载链接，按月份分目录存放。
 
+![image-20260610090016861](/Users/changxinglong/Library/Application Support/typora-user-images/image-20260610090016861.png)
+
+![image-20260610090239170](/Users/changxinglong/Library/Application Support/typora-user-images/image-20260610090239170.png)
+
 ## 功能特性
 
 - **IMAP 协议支持**：兼容 QQ邮箱、163邮箱、Gmail、Outlook 等主流邮箱
@@ -103,14 +107,14 @@ python download_invoices.py -c config.json
 
 **macOS：**
 ```bash
-python3 start.py
-# 或双击 Start.command
+双击 Start.command
+# 或 python3 start.py
 ```
 
 **Windows：**
 ```bash
-python start.py
-# 或双击 Start.bat
+双击 Start.bat
+# 或 python start.py
 ```
 
 启动后自动打开浏览器，提供以下功能：
